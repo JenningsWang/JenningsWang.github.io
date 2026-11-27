@@ -1,0 +1,76 @@
+name: Publish the Iceland guide on GitHub Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: ID of the draft release containing iceland-pages.zip
+        required: true
+        type: string
+      sha256:
+        description: SHA-256 of the checked source build archive
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: account-pages
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Assemble the verified site
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          EXPECTED_SHA: ${{ inputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_ID" =~ ^[0-9]+$ && "$EXPECTED_SHA" =~ ^[0-9a-f]{64}$ ]]
+          asset_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            --jq 'select(.draft and (.tag_name | startswith("iceland-pages-"))) | .assets[] | select(.name == "iceland-pages.zip") | .id')
+          [[ "$asset_id" =~ ^[0-9]+$ ]]
+          gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "$RUNNER_TEMP/site.zip"
+          echo "$EXPECTED_SHA  $RUNNER_TEMP/site.zip" | sha256sum --check --status
+          mkdir _site
+          git archive HEAD | tar -x -C _site --exclude='.github'
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          pages = ["index.html", "iceland-winter-2026.html", "iceland-atlas.html", "iceland-aa-ledger.html"]
+          destination = Path("_site/iceland-winter-2026")
+          destination.mkdir(exist_ok=True)
+          with ZipFile(Path(os.environ["RUNNER_TEMP"]) / "site.zip") as archive:
+              if sorted(archive.namelist()) != sorted(pages):
+                  raise SystemExit("Unexpected site archive contents")
+              for page in pages:
+                  (destination / page).write_bytes(archive.read(page))
+          PY
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+  deploy:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to the account's Pages site
+        id: deployment
+        uses: actions/deploy-pages@v4
