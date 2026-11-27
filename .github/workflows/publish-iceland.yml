@@ -23,12 +23,13 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # GitHub exposes unpublished release assets only to repository writers.
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Assemble the verified site
+      - name: Retrieve the draft asset and verify its digest
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -42,6 +43,10 @@ jobs:
           [[ "$asset_id" =~ ^[0-9]+$ ]]
           gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "$RUNNER_TEMP/site.zip"
           echo "$EXPECTED_SHA  $RUNNER_TEMP/site.zip" | sha256sum --check --status
+      - name: Assemble the four static pages
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir _site
           git archive HEAD | tar -x -C _site --exclude='.github'
           python - <<'PY'
