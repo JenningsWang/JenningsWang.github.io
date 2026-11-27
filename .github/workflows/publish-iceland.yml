@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_id:
-        description: ID of the draft release containing iceland-pages.zip
+        description: ID of the draft release used for this deployment
         required: true
         type: string
       sha256:
@@ -28,20 +28,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Assemble the verified site
+      - name: Retrieve the time-limited GitHub asset and verify its digest
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          DOWNLOAD_URL: ${{ secrets.ICELAND_PAGES_DOWNLOAD_URL }}
           RELEASE_ID: ${{ inputs.release_id }}
           EXPECTED_SHA: ${{ inputs.sha256 }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_ID" =~ ^[0-9]+$ && "$EXPECTED_SHA" =~ ^[0-9a-f]{64}$ ]]
-          asset_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
-            --jq 'select(.draft and (.tag_name | startswith("iceland-pages-"))) | .assets[] | select(.name == "iceland-pages.zip") | .id')
-          [[ "$asset_id" =~ ^[0-9]+$ ]]
-          gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "$RUNNER_TEMP/site.zip"
+          [[ "$DOWNLOAD_URL" == https://release-assets.githubusercontent.com/github-production-release-asset/* ]]
+          curl --silent --fail --proto '=https' "$DOWNLOAD_URL" --output "$RUNNER_TEMP/site.zip"
           echo "$EXPECTED_SHA  $RUNNER_TEMP/site.zip" | sha256sum --check --status
+      - name: Assemble the four static pages
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir _site
           git archive HEAD | tar -x -C _site --exclude='.github'
           python - <<'PY'
